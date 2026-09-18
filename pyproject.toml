@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-lip-sync"
+version = "0.1.0"
+description = "Real-time conversational face avatar: ditto LMDM audio-to-motion + LivePortrait ONNX renderer (Apache-2.0 / MIT stack)."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.0",
+    "opencv-python-headless>=4.9",
+    "onnxruntime>=1.20",
+    "scipy>=1.12",
+    "soxr>=0.5",
+    "soundfile>=0.12",
+]
+
+[project.optional-dependencies]
+gpu = ["onnxruntime-gpu>=1.20"]
+player = ["sounddevice>=0.5"]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["lpavatar*", "avatar_player*"]
+
+[tool.setuptools.package-data]
+lpavatar = ["NOTICE.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
