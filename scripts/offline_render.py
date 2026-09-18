@@ -28,12 +28,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from lpavatar.artifacts import models_root  # noqa: E402
-from lpavatar.compose.pasteback import pasteback  # noqa: E402
-from lpavatar.motion.ditto_motion import LIP_KP, DittoMotionStream, FrameControl  # noqa: E402
+from lpavatar.compose.pasteback import PasteBack  # noqa: E402
+from lpavatar.motion.ditto_motion import (  # noqa: E402
+    LIP_KP,
+    DittoMotionStream,
+    FrameControl,
+    load_motion_engines,
+)
 from lpavatar.motion.hubert import FRAME_SAMPLES, SAMPLE_RATE, iter_windows  # noqa: E402
 from lpavatar.registration.avatar import RegistrationConfig  # noqa: E402
-from lpavatar.render.stage import RenderEngines, render_face  # noqa: E402
-from lpavatar.runtime import OnnxEngine  # noqa: E402
+from lpavatar.render.stage import load_render_engines, render_face  # noqa: E402
 from register_avatar import build_registrar, load_avatar_npz  # noqa: E402
 
 
@@ -81,6 +85,7 @@ def main() -> int:
     )
     ap.add_argument("--snapshots", type=int, default=4, help="PNG frames written next to --out")
     ap.add_argument("--device", choices=("cpu", "cuda"), default="cpu")
+    ap.add_argument("--fp32", action="store_true", help="CUDA: keep warp/decoder in fp32")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
@@ -103,22 +108,19 @@ def main() -> int:
     t_reg = time.perf_counter() - t0
 
     t0 = time.perf_counter()
+    hubert, lmdm = load_motion_engines(args.device, root)
     stream = DittoMotionStream.from_ditto_cfg(
         cfg_path,
         avatar,
-        hubert=OnnxEngine(root / "hubert_streaming_fix_kv.onnx", device=args.device),
-        lmdm=OnnxEngine(root / "lmdm_v0.4_hubert.onnx", device=args.device),
+        hubert=hubert,
+        lmdm=lmdm,
         condition_on=args.condition,
         emo=args.emo,
         overlap_v2=args.overlap,
         sampling_timesteps=args.steps,
         seed=args.seed,
     )
-    engines = RenderEngines(
-        stitch=OnnxEngine(root / "stitch_network.onnx", device=args.device),
-        warp=OnnxEngine(root / "warp_network_ori.onnx", device=args.device),
-        decoder=OnnxEngine(root / "decoder.onnx", device=args.device),
-    )
+    engines = load_render_engines(args.device, root, fp16=not args.fp32)
     t_setup = time.perf_counter() - t0
     print(f"setup: register {t_reg:.1f} s, models + LMDM warm-up {t_setup:.1f} s")
     print(
@@ -145,6 +147,7 @@ def main() -> int:
 
     snap_every = max(1, n_frames_expected // max(args.snapshots, 1))
     lip_src = avatar.kp_info.exp.reshape(21, 3)[list(LIP_KP)]
+    paste = PasteBack(avatar.frame, avatar.m_c2o, avatar.mask_frame)
     lip_disp: list[float] = []
     t_motion = t_render = 0.0
     frames_written = 0
@@ -158,7 +161,7 @@ def main() -> int:
             if args.crop_only:
                 img = np.clip(face, 0, 255).astype(np.uint8)
             else:
-                img = pasteback(avatar.frame, face, avatar.m_c2o, avatar.mask_frame)
+                img = paste(face)
             t_render += time.perf_counter() - t1
             writer.write(cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
             if o.frame_idx % snap_every == 0:

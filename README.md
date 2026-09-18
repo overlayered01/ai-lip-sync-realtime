@@ -45,7 +45,22 @@ python scripts/offline_render.py --audio example/audio.wav --avatar artifacts/av
 ```
 
 CPU(Windows, Python 3.14) 실측: 모션 1.5 s/창(HuBERT + LMDM 10스텝), 렌더 2.4 s/프레임.
-실시간은 M3 의 GPU/TensorRT 단계에서 확보한다.
+
+## 실시간 테스트 (GPU)
+
+```bash
+python -m pip uninstall -y onnxruntime
+python -m pip install -e ".[gpu,player]"
+# onnxruntime-gpu 1.30 은 CUDA 13 빌드. 런타임은 pip 로 받는다 (약 1.5 GB):
+python -m pip install nvidia-cuda-runtime nvidia-cudnn-cu13 nvidia-cublas nvidia-cufft nvidia-curand nvidia-cuda-nvrtc nvidia-nvjitlink
+python scripts/realtime_demo.py --audio example/audio.wav --avatar artifacts/avatars/image.npz --live
+```
+
+첫 실행 때 워프 그래프를 opset 20 으로, 워프·디코더를 fp16 으로 변환해 `artifacts/lpavatar` 에 저장한다(수십 초).
+키: `q` 종료, `b` 끼어들기(오디오를 무음으로 끊고 모션 상태 되감기), `v` 무음 입 고정 토글.
+
+RTX 5080 실측(2026-09-18): 25 fps, 드랍 0, A/V 오프셋 +10 ms, TTS 샘플 도착→표시 0.64 s, 모션 70 ms/창, 렌더 45 ms/프레임(워커 2개).
+상세와 주의점(스레드별 CUDA 그래프 캡처)은 `docs/DITTO_AVATAR_HANDOFF.md` 11장 §7.
 
 ## 마일스톤 현황
 
@@ -53,8 +68,8 @@ CPU(Windows, Python 3.14) 실측: 모션 1.5 s/창(HuBERT + LMDM 10스텝), 렌�
 | --- | --- | --- |
 | M0 | 저장소 구성, lpavatar·테스트·문서 이동, 모델 다운로드 | 완료 (2026-09-18) |
 | M1 | `lpavatar.motion` ditto 어댑터, 오프라인 wav→mp4 | 구현 완료, CPU 검증 (2026-09-18). ditto 원본 영상과의 비교는 GPU 세션에서 |
-| M2 | 온라인 상태기 + 로컬 재생기 | |
-| M3 | TensorRT, 25 fps | |
+| M2 | 온라인 상태기 + 로컬 재생기 | 데모 완료 (2026-09-18): RTX 5080 에서 25 fps, 드랍 0, 지연 0.64 s. 남은 것: 스트리밍 TTS 입력, 마이크 VAD |
+| M3 | TensorRT, 25 fps | ORT CUDA EP + fp16 + CUDA 그래프로 이미 25 fps. TensorRT 는 4060 Ti 급 실측 후 결정 |
 | M4 | STT/LLM/TTS 연결, 끼어들기, 대기 동작, 매팅 | |
 | M5 | 패키징, 고지, 설치 문서 | |
 

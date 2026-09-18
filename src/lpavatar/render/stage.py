@@ -20,6 +20,7 @@ execution for 25 fps is a separate optimisation step (R6).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 
@@ -73,4 +74,21 @@ def render_face(
     return decode(feat, engine=engines.decoder)
 
 
-__all__ = ["RenderEngines", "decode", "render_face", "stitch", "warp"]
+def load_render_engines(
+    device: str = "cpu", root: Path | None = None, *, fp16: bool = True
+) -> RenderEngines:
+    """Engines for ``device`` with the right graph variants (see
+    ``lpavatar.artifacts.render_model_paths``). On CUDA the sessions use graph
+    capture, so keep passing the same tensor shapes."""
+    from lpavatar.artifacts import render_model_paths
+    from lpavatar.runtime.onnx_engine import OnnxEngine
+
+    p = render_model_paths(device, root, fp16=fp16)
+    return RenderEngines(
+        stitch=OnnxEngine(p["stitch"], device=device),
+        warp=OnnxEngine(p["warp"], device=device),
+        decoder=OnnxEngine(p["decoder"], device=device),
+    )
+
+
+__all__ = ["RenderEngines", "decode", "load_render_engines", "render_face", "stitch", "warp"]

@@ -595,6 +595,29 @@ class DittoMotionStream:
     def reset_pose(self) -> None:
         self.a2m.reset_kp_cond()
 
+    def warmup(self, runs: int = 2) -> None:
+        """Run the LMDM sampler on a zero condition so CUDA graph capture (and any
+        lazy allocation) happens now. ORT captures per *thread*, so call this from
+        the thread that will push windows, while no other thread touches the GPU
+        (a capture overlapping other CUDA work fails). Does not touch the
+        streaming state."""
+        cond = np.zeros((1, self.cfg.seq_frames, self.a2m.condition.dim), np.float32)
+        for _ in range(runs):
+            self.a2m.sampler(self.a2m.kp_cond, cond, self.cfg.sampling_timesteps)
+
+
+def load_motion_engines(device: str = "cpu", root: Path | None = None) -> tuple[Engine, Engine]:
+    """``(hubert, lmdm)`` engines. Both graphs come from the ditto HF repo
+    (``scripts/download_models.py --motion``). The LMDM gets CUDA graph capture
+    (15 -> 6 ms per DDIM step); HuBERT has a dynamic output and runs plainly."""
+    from lpavatar.artifacts import models_root
+    from lpavatar.runtime.onnx_engine import OnnxEngine
+
+    root = root or models_root()
+    hubert = OnnxEngine(root / "hubert_streaming_fix_kv.onnx", device=device)
+    lmdm = OnnxEngine(root / "lmdm_v0.4_hubert.onnx", device=device)
+    return hubert, lmdm
+
 
 __all__ = [
     "EYE_KP",
@@ -606,4 +629,5 @@ __all__ = [
     "MotionRetarget",
     "MotionStreamConfig",
     "load_ditto_cfg",
+    "load_motion_engines",
 ]

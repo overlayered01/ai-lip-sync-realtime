@@ -288,6 +288,28 @@ AVTR-1 스트리머 `SpeechScheduler.interrupt()` 는 큐를 비울 때 이미 �
 - `scripts/offline_render.py` 로 ditto 예제 4 s 렌더: 립싱크 상관(오디오 RMS vs 입 변위) 0.39, 입 열림·페이스트백 정상. CPU 실측 모션 1.5 s/창, 렌더 2.4 s/프레임.
 - 미완: ditto 원본 `inference.py` 결과와의 시각 비교(GPU 필요), `condition_on="avatar"` 모드 품질 확인, `rewind()` 의 실제 오디오 끼어들기 연동(M2).
 
-### §7 문서와 일치하는 부분
+### §7 GPU 실시간 실측 (RTX 5080, onnxruntime-gpu 1.30 / CUDA 13, 2026-09-18)
+
+`scripts/realtime_demo.py` 로 ditto 예제 15.75 s 를 스피커 재생 + OpenCV 창 표시로 실행한 결과. TensorRT 없이 ONNX Runtime CUDA EP 만 사용.
+
+| 항목 | 값 |
+| --- | --- |
+| 표시 fps | 24.3~25.7 (드랍 0, 표시 전 스킵 0) |
+| A/V 오프셋 | 평균 +10 ms, 최대 +20 ms (오디오 장치 클록 기준) |
+| TTS 샘플 도착 → 첫 프레임 표시 (`--live`) | 0.64 s (`overlap_v2=75`, 선행 480 ms + 연산) |
+| 모션 창당 (HuBERT + LMDM 10스텝, `--live`) | 70 ms (예산 200 ms) |
+| 렌더 프레임당, 워커 1개 기준 | 45~50 ms (워커 2개 병렬로 25 fps 확보) |
+
+이를 위해 필요했던 변경:
+
+- **워프 그래프 opset 20 변환** (`lpavatar.artifacts.ensure_cuda_warp`): 원본 opset 17 의 `GridSample` 은 CUDA EP 에서 4-D 만 지원해 5-D 볼륨 샘플링에서 실행 오류. opset 20 변환 후 CUDA 18 ms (CPU 560 ms), 원본과 최대 오차 3.5e-4.
+- **fp16 변환** (`ensure_fp16`, onnxconverter-common, I/O 는 fp32 유지): 디코더 27.7 → 15.7 ms (PSNR 78 dB), 워프 18.8 → 9.9 ms (`GridSample` 은 fp32 유지, 디코드 PSNR 59 dB).
+- **CUDA 그래프 + IO 바인딩** (`OnnxEngine(cuda_graph=True)`, 정적 형상 그래프에 자동 적용): LMDM 스텝 15.5 → 5.5 ms. 렌더 그래프에는 이득 없음. **주의**: ORT 는 스레드별로 그래프를 캡처하며, 캡처가 다른 스레드의 GPU 작업과 겹치면 `operation not permitted when stream is capturing` 으로 실패한다. 워커 스레드마다 시작 시 한 번에 하나씩 워밍업(렌더 워커 → 모션 스레드)한 뒤 동시 실행해야 한다. 데모의 `capture_lock` + `Barrier` 가 그 순서를 강제한다.
+- **페이스트백** `cv2.warpAffine(uint8)` + `cv2.blendLinear`: 38 ms → 3.4 ms (float 참조 대비 최대 오차 2/255).
+- **재생기 규칙**: 오디오 장치 재생 위치가 마스터 클록. 이미 늦은 프레임은 렌더 전에 스킵(`skip`), 렌더 후 늦으면 표시에서 폐기(`drop`). 이 규칙이 없으면 렌더가 예산을 조금만 넘어도 지연이 누적되어 몇 초 뒤 전 프레임이 늦어진다(실측: 42.7 ms/프레임에서 8 s 후 붕괴).
+
+M2 완료 기준 "지연 ≤ 0.8 s, 프레임 드랍 없음" 은 이 데모로 충족. 남은 M2 항목: 실제 스트리밍 TTS 입력, 마이크 VAD 끼어들기 연동(데모의 `b` 키가 `rewind()` 경로를 호출함), 30분 무음 세션 검증. 목표 GPU(RTX 4060 Ti 급)에서의 재측정은 M3.
+
+### §8 문서와 일치하는 부분
 
 HuBERT 입력 규격과 `[-14:-4]` 슬라이스, 1103 조건 결합, 265 벡터 순서, 코사인 DDIM 스케줄과 setup 시 고정 noise, `_fix_exp_for_x_d_info_v2` 의 입·눈 인덱스, 세션 시작 시 무음 70프레임 워밍업과 첫 클립 폐기는 원본 코드와 일치한다. 워밍업은 대기 상태에서 한 번만 일어나므로 지속 무음 주입 설계와 맞는다. 경청 동작 부재는 1장에서 이미 인지한 손실이며, AVTR-1 의 AR(1) 상관 노이즈 역할은 ditto 에서 70프레임 중첩 융합이 대신한다.
